@@ -1,0 +1,74 @@
+:PROPERTIES:
+:ID:       6bad3860-d4d0-47f3-860b-41abee580d9c
+:END:
+#+title: public/kubernetes/virt-notes
+
+* Kubernetes the hard way VM setup
+
+https://github.com/kelseyhightower/kubernetes-the-hard-way/blob/master/docs/01-prerequisites.md
+
+** Create a lab network
+
+#+begin_src sh
+cat > k8s-net.xml <<'EOF'
+<network>
+  <name>k8s</name>
+  <forward mode='nat'/>
+  <bridge name='virbr-k8s' stp='on' delay='0'/>
+  <ip address='10.100.0.1' netmask='255.255.255.0'>
+    <dhcp>
+      <range start='10.100.0.100' end='10.100.0.200'/>
+      <host mac='52:54:00:00:00:10' name='server' ip='10.100.0.10'/>
+      <host mac='52:54:00:00:00:20' name='node-0' ip='10.100.0.20'/>
+      <host mac='52:54:00:00:00:21' name='node-1' ip='10.100.0.21'/>
+    </dhcp>
+  </ip>
+</network>
+EOF
+
+sudo virsh net-define k8s-net.xml
+sudo virsh net-start k8s
+sudo virsh net-autostart k8s
+#+end_src
+
+** Create VMs
+
+#+begin_src sh
+cd /var/lib/libvirt/images
+sudo curl -LO https://cloud.debian.org/images/cloud/bookworm/latest/debian-12-genericcloud-amd64.qcow2
+
+declare -A MAC=( [server]=52:54:00:00:00:10 [node-0]=52:54:00:00:00:20 [node-1]=52:54:00:00:00:21 )
+
+for vm in server node-0 node-1; do
+  # ...qemu-img create as before...
+  sudo virt-install --name $vm --memory 2048 --vcpus 1 \
+    --disk /var/lib/libvirt/images/$vm.qcow2 --import --osinfo debian12 \
+    --network network=k8s,mac=${MAC[$vm]} \
+    --graphics none --noautoconsole \
+    --cloud-init root-ssh-key=$HOME/.ssh/id_ed25519.pub
+done
+#+end_src
+
+** Ostree install virt
+
+#+begin_src sh
+rpm-ostree install libvirt qemu-kvm virt-install virt-manager guestfs-tools
+systemctl reboot
+#+end_src
+
+** libvirt group
+
+(check this)
+
+#+begin_src sh
+grep -E '^libvirt:' /usr/lib/group | sudo tee -a /etc/group
+sudo usermod -aG libvirt $USER
+#+end_src
+
+** toolbox
+
+#+begin_src sh
+toolbox create k8s-jumpbox
+toolbox enter k8s-jumpbox
+sudo dnf install wget curl vim openssl git
+#+end_src
