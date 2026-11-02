@@ -51,10 +51,93 @@ done
 
 ** Ostree install virt
 
+The `libvirt` package is a meta-package that pulls in the daemon and the qemu,
+network, nodedev and storage drivers, so layering it is enough:
+
 #+begin_src sh
 rpm-ostree install libvirt qemu-kvm virt-install virt-manager guestfs-tools
 systemctl reboot
 #+end_src
+
+*** Libvirt daemons on the lab host
+
+The playbooks only use the `virsh` CLI on the remote host, so the libvirt
+daemons must already be running there. If they are not, `virsh` fails with:
+
+#+begin_src
+error: failed to connect to the hypervisor
+error: Failed to connect socket to '/var/run/libvirt/virtqemud-sock': No such file or directory
+#+end_src
+
+*** Which daemon model?
+
+Current Fedora uses modular, socket-activated daemons (`virtqemud`,
+`virtnetworkd`, ...). Older setups use the monolithic `libvirtd`. Check which
+units exist:
+
+#+begin_src sh
+systemctl list-unit-files 'virt*.socket' 'libvirtd*.socket'
+#+end_src
+
+**** Check
+
+Modular daemons:
+
+#+begin_src sh
+systemctl status virtqemud.socket virtnetworkd.socket virtstoraged.socket
+#+end_src
+
+Monolithic daemon:
+
+#+begin_src sh
+systemctl status libvirtd.socket
+#+end_src
+
+Confirm `virsh` can connect:
+
+#+begin_src sh
+sudo virsh -c qemu:///system list --all
+sudo virsh -c qemu:///system net-list --all
+#+end_src
+
+**** Enable
+
+Modular daemons (Fedora default):
+
+#+begin_src sh
+sudo systemctl enable --now virtqemud.socket virtnetworkd.socket virtstoraged.socket
+#+end_src
+
+| Socket                | Needed for                                           |
+|-----------------------+------------------------------------------------------|
+| `virtqemud.socket`    | Connecting to the QEMU hypervisor (`qemu:///system`) |
+| `virtnetworkd.socket` | Defining and starting the lab network (`site.yml`)   |
+| `virtstoraged.socket` | Storage pools and disk volumes (`virt-install`)      |
+
+If `virt-install` later complains about node devices, also enable
+`virtnodedevd.socket`.
+
+Monolithic daemon:
+
+#+begin_src sh
+sudo systemctl enable --now libvirtd.socket
+#+end_src
+
+`enable --now` starts the sockets immediately and on every boot. The daemons
+themselves start on demand when something connects.
+
+** Troubleshooting
+
+*** Still can't connect after enabling
+
+check `journalctl -u virtqemud` and
+  `journalctl -u virtnetworkd` for startup errors.
+
+*** Permission denied
+
+run `virsh` with `sudo`, or use `-c qemu:///system`. Without a URI, `virsh`
+  defaults to the per-user session, which has no access to the lab network. The
+  playbooks set `LIBVIRT_DEFAULT_URI=qemu:///system` for this reason.
 
 ** libvirt group
 
